@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ABYSS: INFINITE CHALLENGE</title>
+    <style>
+        :root { --neon-blue: #00ffcc; --neon-red: #ff0033; --neon-gold: #f1c40f; }
+        * { box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+        body { background: #020204; color: white; font-family: 'Segoe UI', system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; touch-action: none; }
+        
+        #menu-overlay { position: absolute; inset: 0; background: rgba(2,2,4,0.99); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; text-align: center; padding: 20px; }
+        .game-title { font-size: clamp(2rem, 8vw, 3.5rem); font-weight: 900; letter-spacing: 6px; background: linear-gradient(45deg, var(--neon-blue), #7700ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; text-transform: uppercase; }
+        .btn { background: transparent; border: 2px solid var(--neon-blue); padding: 12px 30px; margin: 6px; border-radius: 30px; cursor: pointer; font-weight: bold; font-size: clamp(0.9rem, 4vw, 1.1rem); color: var(--neon-blue); transition: 0.3s; width: 280px; max-width: 90%; }
+        .btn:hover { background: var(--neon-blue); color: #000; box-shadow: 0 0 30px rgba(0,255,204,0.5); }
+        
+        canvas { background: #050507; border: 2px solid #111; box-shadow: 0 25px 60px rgba(0,0,0,0.9); max-width: 100%; max-height: 100%; aspect-ratio: 16/9; }
+        
+        .game-ui { position: absolute; top: 15px; text-align: center; pointer-events: none; width: 100%; display: flex; flex-direction: column; align-items: center; z-index: 10; }
+        .stats-row { display: flex; gap: clamp(15px, 5vw, 40px); font-weight: bold; font-size: clamp(0.9rem, 4vw, 1.2rem); letter-spacing: 1px; }
+        #boss-ui-bar { width: 70%; max-width: 400px; height: 8px; background: #111; border-radius: 4px; margin-top: 10px; display: none; overflow: hidden; border: 1px solid #333; }
+        #hp-fill { width: 100%; height: 100%; background: linear-gradient(90deg, var(--neon-red), #aa0000); box-shadow: 0 0 20px var(--neon-red); }
+
+        /* نظام تحكم لمس متطور وحقيقي للتلفون */
+        .mobile-controls { position: absolute; bottom: 25px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 25px; pointer-events: none; z-index: 50; width: 100%; }
+        .touch-btn { width: clamp(60px, 15vw, 75px); height: clamp(60px, 15vw, 75px); background: rgba(255, 255, 255, 0.03); border: 2px solid var(--neon-blue); border-radius: 50%; color: var(--neon-blue); font-size: 1.8rem; font-weight: bold; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
+        .dir-buttons { display: flex; gap: 15px; pointer-events: none; }
+        
+        /* إخفاء أزرار الموبايل على الكمبيوتر تلقائياً */
+        @media (min-width: 1024px) { .mobile-controls { display: none; } }
+    </style>
+</head>
+<body>
+
+    <div id="menu-overlay">
+        <h1 class="game-title">ABYSS</h1>
+        <h2 style="color: var(--neon-blue); font-size: 0.9rem; margin: 5px 0 20px 0; letter-spacing: 4px;">INFINITE CHALLENGE (50 LEVELS)</h2>
+        <button class="btn" onclick="initGame('Sword')">⚔️ CYBER SABER</button>
+        <button class="btn" onclick="initGame('Hammer')" style="border-color: var(--neon-gold); color: var(--neon-gold);">🔨 PLASMA HAMMER</button>
+        <button class="btn" onclick="initGame('Blaster')" style="border-color: #ff00ff; color: #ff00ff;">🔫 CYBER BLASTER (E للاطلاق)</button>
+    </div>
+
+    <div class="game-ui">
+        <div class="stats-row">
+            <div style="color: var(--neon-red)">DEATHS: <span id="death-txt">0</span></div>
+            <div id="level-msg" style="color: #fff">STAGE: 1 / 50</div>
+            <div style="color: var(--neon-blue)">GHOSTS: <span id="ghost-count">1</span></div>
+        </div>
+        <div id="boss-ui-bar"><div id="hp-fill"></div></div>
+    </div>
+
+    <canvas id="abyssGame" width="960" height="540"></canvas>
+
+    <div class="mobile-controls">
+        <div class="dir-buttons">
+            <div class="touch-btn" id="btn-left">◀</div>
+            <div class="touch-btn" id="btn-right">▶</div>
+        </div>
+        <div class="touch-btn" id="btn-jump">▲</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById("abyssGame");
+        const ctx = canvas.getContext("2d");
+
+        let player = { x: 60, y: 150, w: 28, h: 28, vx: 0, vy: 0, grounded: false, deaths: 0, weapon: '', power: 25, isSecret: false, particles: [], bullets: [], lastShot: 0 };
+        let boss = { x: 750, y: 350, w: 90, h: 90, hp: 1000, maxHp: 1000, vx: -6, active: false, lasers: [], type: 1 };
+        let state = { level: 1, active: false, shake: 0, frameCount: 0, safeTicks: 0 };
+        let ghosts = [];
+        let movingTraps = [];
+        let keys = {};
+        let touch = { left: false, right: false };
+
+        window.onkeydown = e => keys[e.code] = true;
+        window.onkeyup = e => keys[e.code] = false;
+
+        // ميكانيكية لمس احترافية ومتعددة تمنع القلتش والتفويت
+        const bindTouch = (id, prop) => {
+            const btn = document.getElementById(id);
+            btn.addEventListener("touchstart", (e) => { e.preventDefault(); touch[prop] = true; }, {passive: false});
+            btn.addEventListener("touchend", (e) => { e.preventDefault(); touch[prop] = false; }, {passive: false});
+            btn.addEventListener("touchcancel", (e) => { e.preventDefault(); touch[prop] = false; }, {passive: false});
+        };
+        bindTouch("btn-left", "left");
+        bindTouch("btn-right", "right");
+        
+        document.getElementById("btn-jump").addEventListener("touchstart", (e) => {
+            e.preventDefault();
+            if(player.grounded) { player.vy = -16.5; player.grounded = false; addParticles(player.x + 14, player.y + 28, "#444"); }
+        }, {passive: false});
+
+        // إطلاق نار ذكي للمسدس للموبايل
+        setInterval(() => {
+            if(state.active && player.weapon === 'Blaster') {
+                player.bullets.push({ x: player.x + 28, y: player.y + 12, vx: 10 });
+                player.lastShot = state.frameCount;
+                addParticles(player.x + 30, player.y + 12, "#ff00ff");
+            }
+        }, 300);
+
+        function initGame(weaponSelection) {
+            player.weapon = weaponSelection;
+            player.power = weaponSelection === 'Sword' ? 55 : (weaponSelection === 'Hammer' ? 25 : 8);
+            document.getElementById("menu-overlay").style.display = "none";
+            state.active = true;
+            setupStage();
+            gameLoop();
+        }
+
+        function setupStage() {
+            ghosts = []; movingTraps = []; player.bullets = []; boss.active = false; boss.lasers = [];
+            state.safeTicks = 60; // ثانية كاملة حماية عند بداية كل مرحلة
+            document.getElementById("boss-ui-bar").style.display = "none";
+            document.getElementById("level-msg").innerText = "STAGE: " + state.level + " / 50";
+            document.getElementById("ghost-count").innerText = state.level;
+
+            let isBossLevel = (state.level === 20 || state.level === 35 || state.level === 50);
+            if (!isBossLevel) {
+                for(let i = 0; i < state.level; i++) {
+                    ghosts.push({ x: 500 + Math.random() * 400, y: 50 + Math.random() * 200, vx: (Math.random() > 0.5 ? 2.5 : -2.5), vy: 1.5 });
+                }
+            }
+            if (state.level >= 5 && !isBossLevel) {
+                movingTraps.push({ x: 500, y: 430, w: 40, h: 20, vx: 3.5 + (state.level * 0.1) });
+            }
+            if (state.level === 20) triggerBoss(1, 1000, "SHADOW STALKER (STAGE 20)");
+            else if (state.level === 35) triggerBoss(2, 1500, "PLASMA CORE (STAGE 35)");
+            else if (state.level === 50) {
+                triggerBoss(3, 2500, "THE FINAL SHOWDOWN (STAGE 50)");
+                for(let i = 0; i < 50; i++) ghosts.push({ x: 600 + (i * 6), y: 60 + (i % 5) * 40, vx: 1.5, vy: 1.5 });
+            }
+        }
+
+        function triggerBoss(type, hp, name) {
+            boss.active = true; boss.type = type; boss.hp = hp; boss.maxHp = hp; boss.x = 750; boss.y = 360;
+            boss.vx = type === 1 ? -8 : (type === 2 ? -7 : -9);
+            document.getElementById("boss-ui-bar").style.display = "block";
+            document.getElementById("hp-fill").style.width = "100%";
+            document.getElementById("level-msg").innerText = name;
+        }
+
+        function triggerDeath() {
+            if (state.safeTicks > 0) return; // حظر الموت لو درع الحماية شغال
+            player.deaths++;
+            document.getElementById("death-txt").innerText = player.deaths;
+            player.x = 60; player.y = 150; player.vx = 0; player.vy = 0;
+            state.shake = 20; state.safeTicks = 60; player.bullets = [];
+            if(boss.active) { boss.hp = boss.maxHp; boss.lasers = []; }
+        }
+
+        function addParticles(x, y, color) {
+            for(let i=0; i<6; i++) player.particles.push({ x, y, vx: Math.random()*6-3, vy: Math.random()*6-3, life: 1, color });
+        }
+
+        function update() {
+            if (!state.active) return;
+            state.frameCount++;
+            if (state.shake > 0) state.shake--;
+            if (state.safeTicks > 0) state.safeTicks--;
+
+            // دمج أزرار اللمس والكيبورد بسلاسة
+            if (keys["KeyD"] || touch.right) player.vx += 0.75;
+            else if (keys["KeyA"] || touch.left) player.vx -= 0.75;
+            else player.vx *= 0.82;
+
+            if ((keys["Space"] || keys["KeyW"]) && player.grounded) {
+                player.vy = -16.5; player.grounded = false; addParticles(player.x + 14, player.y + 28, "#444");
+            }
+
+            if (player.weapon === 'Blaster' && keys["KeyE"] && state.frameCount - player.lastShot > 12) {
+                player.bullets.push({ x: player.x + 28, y: player.y + 12, vx: 10 });
+                player.lastShot = state.frameCount; addParticles(player.x + 30, player.y + 12, "#ff00ff");
+            }
+
+            player.vy += 0.9; player.x += player.vx; player.y += player.vy;
+            player.vx = Math.max(-7.5, Math.min(7.5, player.vx));
+
+            // تثبيت الأرضية بناءً على طول الكانفاس الجديد والثابت
+            if (player.y > 422) { player.y = 422; player.vy = 0; player.grounded = true; }
+            if (player.x < 0) player.x = 0;
+
+            if (state.level === 25 && player.y < 50 && player.x > 450 && player.x < 550) {
+                player.isSecret = true; player.power = player.weapon === 'Blaster' ? 40 : 220;
+                document.getElementById("level-msg").innerText = "STAGE: 25 / 50 (OVERLOADED 🔥)";
+            }
+
+            if (player.x > 930) { if (state.level < 50) { state.level++; player.x = 40; player.y = 150; setupStage(); } }
+
+            // تحديث وتنظيف رصاص اللاعب
+            for (let bIndex = player.bullets.length - 1; bIndex >= 0; bIndex--) {
+                let bullet = player.bullets[bIndex]; bullet.x += bullet.vx;
+                for (let gIndex = ghosts.length - 1; gIndex >= 0; gIndex--) {
+                    if (Math.abs(bullet.x - ghosts[gIndex].x) < 25 && Math.abs(bullet.y - ghosts[gIndex].y) < 25) {
+                        addParticles(ghosts[gIndex].x, ghosts[gIndex].y, "red"); ghosts.splice(gIndex, 1); player.bullets.splice(bIndex, 1);
+                        document.getElementById("ghost-count").innerText = ghosts.length; break;
+                    }
+                }
+                if (boss.active && bIndex < player.bullets.length && bullet.x > boss.x && bullet.x < boss.x + boss.w && bullet.y > boss.y && bullet.y < boss.y + boss.h) {
+                    boss.hp -= player.power; addParticles(bullet.x, bullet.y, "#ff00ff"); player.bullets.splice(bIndex, 1);
+                    document.getElementById("hp-fill").style.width = (boss.hp / boss.maxHp) * 100 + "%"; state.shake = 4;
+                    if (boss.hp <= 0) {
+                        boss.active = false; document.getElementById("boss-ui-bar").style.display = "none";
+                        if (state.level === 50) { state.active = false; alert("مستحيل!! لقد تغلبت على التحدي وختمت الـ 50 مرحلة بالكامل! 🏆👑"); location.reload(); }
+                        else { state.level++; player.x = 40; player.y = 150; setupStage(); }
+                    }
+                }
+                if (bIndex < player.bullets.length && bullet.x > canvas.width) player.bullets.splice(bIndex, 1);
+            }
+
+            // ملاحقة الأشباح
+            ghosts.forEach(g => {
+                let speedFactor = 0.005 + (state.level * 0.0003); g.x += (player.x - g.x) * speedFactor; g.y += (player.y - g.y) * speedFactor;
+                if (Math.abs(player.x - g.x) < 20 && Math.abs(player.y - g.y) < 20) triggerDeath();
+            });
+
+            // حركة الفخاخ الأرضية
+            movingTraps.forEach(t => {
+                t.x += t.vx; if (t.x < 300 || t.x > 850) t.vx *= -1;
+                if (player.x + player.w > t.x && player.x < t.x + t.w && player.y + player.h > t.y) triggerDeath();
+            });
+
+            // الفخ الثابت في الإحداثي البعيد الآمن
+            if (state.level >= 10 && state.level % 3 === 0 && !boss.active) { if (player.x > 580 && player.x < 630 && player.y > 390) triggerDeath(); }
+
+            if (boss.active) {
+                boss.x += boss.vx; if (boss.x < 250 || boss.x > 850) boss.vx *= -1;
+                if (boss.type === 1) { if (Math.abs(player.x - boss.x) < 150 && Math.random() < 0.03) boss.x = player.x; } 
+                else if (boss.type === 2) { if (state.frameCount % 35 === 0) { boss.lasers.push({ x: boss.x, y: boss.y + 20, vx: -8 }); boss.lasers.push({ x: boss.x, y: boss.y + 60, vx: -9 }); } } 
+                else if (boss.type === 3) { if (Math.abs(player.x - boss.x) < 200 && Math.random() < 0.04) boss.x = player.x; if (state.frameCount % 20 === 0) boss.lasers.push({ x: boss.x, y: boss.y + 40, vx: -12 }); }
+
+                for (let i = boss.lasers.length - 1; i >= 0; i--) {
+                    let l = boss.lasers[i]; l.x += l.vx;
+                    if (player.weapon === 'Hammer' && Math.abs(player.x - l.x) < 40 && Math.abs(player.y - l.y) < 40) { boss.lasers.splice(i, 1); addParticles(l.x, l.y, "gold"); state.shake = 5; } 
+                    else if (Math.abs(player.x - l.x) < 22 && Math.abs(player.y - l.y) < 22) triggerDeath();
+                    else if (l.x < -50) boss.lasers.splice(i, 1);
+                }
+
+                if (player.x < boss.x + boss.w && player.x + player.w > boss.x && player.y < boss.y + boss.h && player.y + player.h > boss.y) {
+                    if (player.weapon === 'Sword') {
+                        if (player.vy > 0 && player.y < boss.y + 25) { boss.hp -= player.power; player.vy = -14; state.shake = 15; addParticles(boss.x + 45, boss.y + 45, "red"); } 
+                        else { triggerDeath(); }
+                    } else if (player.weapon === 'Hammer') { boss.hp -= player.power; state.shake = 20; player.vx = player.x < boss.x ? -6 : 6; player.vy = -6; addParticles(boss.x + 45, boss.y + 45, "gold"); } 
+                    else { triggerDeath(); }
+                    document.getElementById("hp-fill").style.width = (boss.hp / boss.maxHp) * 100 + "%";
+                }
+            }
+
+            // تنظيف الشرار
+            for (let i = player.particles.length - 1; i >= 0; i--) {
+                let p = player.particles[i]; p.x += p.vx; p.y += p.vy; p.life -= 0.02; if (p.life <= 0) player.particles.splice(i, 1);
+            }
+        }
+
+        function draw() {
+            ctx.save(); if (state.shake > 0) ctx.translate(Math.random() * state.shake - state.shake/2, Math.random() * state.shake - state.shake/2);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // الأرضية النيون الثابتة
+            ctx.fillStyle = "rgba(0, 255, 204, 0.03)"; ctx.fillRect(0, 450, canvas.width, 90);
+            ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--neon-blue"); 
+            ctx.shadowBlur = 15; ctx.shadowColor = getComputedStyle(document.documentElement).getPropertyValue("--neon-blue");
+            ctx.fillRect(0, 450, canvas.width, 4);
+
+            player.particles.forEach(p => { ctx.globalAlpha = p.life; ctx.fillStyle = p.color; ctx.fillRect(p.x, p.y, 3, 3); });
+            ctx.globalAlpha = 1.0;
+
+            // رسم تأثير درع الحماية المؤقت (الوميض) عند الرسبون
+            if (state.safeTicks > 0 && state.frameCount % 10 < 5) ctx.globalAlpha = 0.3;
+            ctx.fillStyle = player.isSecret ? getComputedStyle(document.documentElement).getPropertyValue("--neon-gold") : "#fff";
+            ctx.shadowColor = player.isSecret ? "gold" : "#fff"; ctx.fillRect(player.x, player.y, player.w, player.h);
+            ctx.globalAlpha = 1.0;
+            
+            if (player.weapon === 'Sword') ctx.fillStyle = varColor("--neon-blue");
+            else if (player.weapon === 'Hammer') ctx.fillStyle = varColor("--neon-gold");
+            else ctx.fillStyle = "#ff00ff";
+            ctx.fillRect(player.x + (player.vx >= 0 ? 24 : -10), player.y + 12, 14, 4);
+
+            ctx.fillStyle = "#ff00ff"; ctx.shadowColor = "#ff00ff"; ctx.shadowBlur = 10;
+            player.bullets.forEach(b => ctx.fillRect(b.x, b.y, 12, 4));
+
+            ctx.shadowColor = "red";
+            ghosts.forEach(g => { ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--neon-red"); ctx.beginPath(); ctx.arc(g.x, g.y, 7, 0, Math.PI * 2); ctx.fill(); });
+
+            if (state.level >= 10 && state.level % 3 === 0 && !boss.active) { ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--neon-red"); ctx.shadowColor = "red"; ctx.fillRect(590, 430, 35, 20); }
+
+            movingTraps.forEach(t => { ctx.fillStyle = "#ff5500"; ctx.shadowColor = "#ff5500"; ctx.shadowBlur = 10; ctx.fillRect(t.x, t.y, t.w, t.h); });
+            if (state.level === 25 && !player.isSecret) { ctx.fillStyle = "rgba(241, 196, 15, 0.05)"; ctx.fillRect(485, 0, 30, 40); }
+
+            if (boss.active) {
+                let bossColor = boss.type === 1 ? "#7700ff" : (boss.type === 2 ? "#ffaa00" : "#ff0033");
+                ctx.fillStyle = bossColor; ctx.shadowBlur = 30; ctx.shadowColor = bossColor; ctx.fillRect(boss.x, boss.y, boss.w, boss.h);
+                ctx.fillStyle = "white"; ctx.fillRect(boss.x + 12, boss.y + 20, 15, 15); ctx.fillRect(boss.x + 62, boss.y + 20, 15, 15);
+                ctx.fillStyle = "black"; ctx.fillRect(boss.x + 20, boss.y + 60, 50, 6);
+                ctx.fillStyle = "#ff0000"; ctx.shadowColor = "#ff0000"; ctx.shadowBlur = 15; boss.lasers.forEach(l => ctx.fillRect(l.x, l.y, 25, 6));
+            }
+            ctx.restore();
+        }
+
+        function varColor(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+        function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+    </script>
+</body>
+</html>
